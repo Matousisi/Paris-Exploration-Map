@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Paris Run Map 3D</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+  #map { position: absolute; inset: 0; }
+  .panel {
+    position: absolute; top: 12px; left: 12px; z-index: 10;
+    width: 250px; max-height: calc(100% - 24px); overflow-y: auto;
+    background: rgba(10, 12, 16, 0.82); backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.09); border-radius: 14px;
+    padding: 14px; color: #dfe4ec;
+  }
+  .panel h1 { font-size: 15px; margin: 0 0 2px; letter-spacing: .4px;
+    background: linear-gradient(90deg,#22ff88,#4dc9ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .panel .sub { font-size: 10.5px; color: #7b8494; margin: 0 0 10px; }
+  .row { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+  button {
+    flex: 1; min-width: 0; background: #161b23; color: #dfe4ec; border: 1px solid #2a3140;
+    border-radius: 8px; padding: 7px 8px; font-size: 11.5px; cursor: pointer; transition: .15s;
+    white-space: nowrap;
+  }
+  button:hover { background: #202734; border-color: #3b4050; }
+  button.active { background: #22ff88; color: #05130c; border-color: #22ff88; font-weight: 600; }
+  button.danger:hover { background: #3a1220; border-color: #ff2d3f66; }
+  .swatch {
+    width: 30px; height: 30px; border-radius: 8px; cursor: pointer; border: 2px solid transparent;
+    display: flex; align-items: center; justify-content: center; font-size: 9px; color: #000; font-weight: 700;
+  }
+  .swatch.active { border-color: #fff; box-shadow: 0 0 10px rgba(255,255,255,.35); }
+  .lbl { font-size: 10.5px; color: #7b8494; margin: 10px 0 4px; text-transform: uppercase; letter-spacing: .8px; }
+  input[type=range] { width: 100%; accent-color: #22ff88; }
+  .stats { font-size: 11px; color: #9aa4b2; margin-top: 10px; line-height: 1.6; border-top: 1px solid #232a37; padding-top: 8px; }
+  .stats b { color: #dfe4ec; }
+  .legend { display: flex; gap: 10px; margin-top: 8px; font-size: 10.5px; color: #9aa4b2; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .hint { position: absolute; bottom: 12px; right: 12px; z-index: 10; font-size: 10.5px; color: #667080;
+    background: rgba(10,12,16,.75); border: 1px solid #232a37; border-radius: 8px; padding: 6px 10px; }
+  .modal {
+    position: absolute; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center;
+    background: #000; color: #dfe4ec; text-align: center; padding: 30px;
+  }
+  .modal .box { max-width: 460px; line-height: 1.65; font-size: 14px; }
+  .modal .box code { background: #161b23; padding: 2px 7px; border-radius: 6px; color: #22ff88; }
+  .maplibregl-ctrl-attrib { background: rgba(0,0,0,.5) !important; color: #556 !important; }
+  .maplibregl-ctrl-attrib a { color: #778 !important; }
+  .maplibregl-ctrl-group { background: #12151c !important; }
+  .maplibregl-ctrl-group button + .maplibregl-ctrl-icon { filter: invert(1) opacity(.7); }
+  @media (max-width: 640px) { .panel { width: calc(100% - 24px); } .hint { display: none; } }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="panel" id="ui">
+  <h1>PARIS RUN MAP 3D</h1>
+  <p class="sub">Tracez vos parcours à la main · fond noir · Paris only</p>
+
+  <div class="row" id="modeRow">
+    <button id="btnDraw" class="active">✏️ Dessiner</button>
+    <button id="btnPan">🖐 Naviguer</button>
+    <button id="btnErase">🧽 Gommer</button>
+  </div>
+
+  <div class="lbl">Couleur</div>
+  <div class="row" id="palette"></div>
+  <div class="legend">
+    <span><i class="dot" style="background:#22ff88"></i> parcouru</span>
+    <span><i class="dot" style="background:#ff2d3f"></i> inaccessible</span>
+  </div>
+
+  <div class="lbl">Épaisseur : <span id="wVal">3</span></div>
+  <input type="range" id="width" min="1" max="10" step="0.5" value="3" />
+
+  <div class="row">
+    <button id="btnUndo">↩︎ Annuler</button>
+    <button id="btnClear" class="danger">Tout effacer</button>
+  </div>
+
+  <div class="lbl">Vue</div>
+  <div class="row">
+    <button id="btn3d" class="active">3D</button>
+    <button id="btn2d">2D</button>
+    <button id="btnReset">⌖ Recentrer</button>
+  </div>
+
+  <div class="lbl">Couches</div>
+  <div class="row">
+    <button id="tglB" class="active">🏢 Bâtiments</button>
+    <button id="tglR" class="active">🛣 Rues</button>
+  </div>
+
+  <div class="lbl">Données</div>
+  <div class="row">
+    <button id="btnGeo">⬇ GeoJSON</button>
+    <button id="btnPng">⬇ PNG</button>
+    <button id="btnImp">⬆ Importer</button>
+  </div>
+  <input type="file" id="fileImp" accept=".geojson,.json" style="display:none" />
+
+  <div class="stats" id="stats"></div>
+</div>
+
+<div class="hint">🖱 clic gauche : dessiner · clic droit maintenu : pivoter / incliner · molette : zoom · glisser en mode Naviguer</div>
+
+<div class="modal" id="fallback"><div class="box">
+  <h2>🕶️ L'aperçu est limité ici</h2>
+  <p>L'aperçu intégré bloque les ressources externes (la carte et ses tuiles viennent d'OpenFreeMap/OpenStreetMap).</p>
+  <p>Téléchargez ce fichier HTML puis ouvrez-le par <code>double-clic</code> dans votre navigateur : tout fonctionne, sans installation ni compte.</p>
+</div></div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ===== Contour de Paris : les 20 arrondissements (clic_that_hood / OpenStreetMap) ===== */
+  var PARIS_RINGS = [[[2.34,48.87196],[2.34789,48.87069],[2.35433,48.86931],[2.35098,48.86341],[2.33029,48.86829],[2.32821,48.86972],[2.32807,48.86992],[2.34,48.87196]],[[2.36236,48.86791],[2.36476,48.86644],[2.36669,48.86319],[2.36845,48.85582],[2.36434,48.85644],[2.36163,48.85726],[2.35863,48.85876],[2.35683,48.86011],[2.35339,48.86121],[2.35017,48.86203],[2.35425,48.86929],[2.36236,48.86791]],[[2.3518,48.83675],[2.34549,48.8376],[2.33646,48.83962],[2.34258,48.85026],[2.3442,48.85376],[2.3445,48.85404],[2.34686,48.8533],[2.35017,48.852],[2.3548,48.85079],[2.36098,48.84861],[2.366,48.845],[2.36493,48.84438],[2.36184,48.84],[2.3518,48.83675]],[[2.31647,48.84685],[2.31904,48.84785],[2.32412,48.85031],[2.32704,48.85161],[2.32866,48.85195],[2.3316,48.85634],[2.33386,48.85918],[2.3375,48.85849],[2.34059,48.85675],[2.34251,48.85525],[2.34447,48.85399],[2.34425,48.85377],[2.34264,48.85035],[2.33652,48.83963],[2.31999,48.8451],[2.31647,48.84685]],[[2.30953,48.84581],[2.30734,48.84715],[2.28988,48.85819],[2.29477,48.86186],[2.30022,48.8635],[2.31833,48.86384],[2.33146,48.85968],[2.33384,48.85918],[2.33159,48.85626],[2.33041,48.85442],[2.3293,48.85267],[2.32848,48.85183],[2.32711,48.8516],[2.31927,48.8478],[2.31365,48.84591],[2.31135,48.84522],[2.30953,48.84581]],[[2.30155,48.8646],[2.29987,48.86513],[2.2988,48.86869],[2.2973,48.87115],[2.29554,48.87326],[2.29457,48.87319],[2.29403,48.87367],[2.2944,48.87429],[2.29541,48.87432],[2.29777,48.87775],[2.29764,48.87803],[2.29805,48.87846],[2.2988,48.87825],[2.30901,48.88046],[2.31661,48.88134],[2.32721,48.88345],[2.32685,48.87591],[2.32661,48.8754],[2.32698,48.87383],[2.32687,48.87333],[2.32629,48.8726],[2.32651,48.87247],[2.32582,48.86953],[2.32515,48.86939],[2.32526,48.86902],[2.32077,48.8631],[2.31828,48.86381],[2.30167,48.86352],[2.30155,48.8646]],[[2.3396,48.88201],[2.34952,48.88378],[2.34987,48.88069],[2.34921,48.87888],[2.349,48.87722],[2.34814,48.87566],[2.34785,48.87387],[2.34789,48.87069],[2.34004,48.87196],[2.32579,48.86957],[2.32652,48.87247],[2.32631,48.87259],[2.32688,48.87334],[2.32698,48.87378],[2.32663,48.87544],[2.32682,48.87595],[2.32717,48.88342],[2.32793,48.88362],[2.32948,48.88465],[2.33741,48.88227],[2.3396,48.88201]],[[2.36876,48.88408],[2.36914,48.88329],[2.37021,48.88264],[2.37026,48.87863],[2.37081,48.87812],[2.3706,48.87756],[2.37695,48.87211],[2.37292,48.87064],[2.36421,48.86779],[2.36348,48.86723],[2.3624,48.86791],[2.35429,48.86929],[2.34794,48.87073],[2.34781,48.87394],[2.34816,48.87575],[2.34897,48.87728],[2.34927,48.87922],[2.34987,48.88069],[2.34949,48.8838],[2.35923,48.88447],[2.36481,48.88436],[2.36876,48.88408]],[[2.38318,48.86712],[2.38378,48.86607],[2.38747,48.86282],[2.38965,48.85844],[2.39223,48.85757],[2.39432,48.85655],[2.3984,48.85133],[2.39921,48.84871],[2.39906,48.8481],[2.3959,48.84835],[2.38429,48.85017],[2.38,48.85048],[2.37154,48.85246],[2.37026,48.85322],[2.36918,48.85308],[2.36674,48.86319],[2.36472,48.86641],[2.36348,48.86726],[2.36421,48.86779],[2.37687,48.87211],[2.38318,48.86712]],[[2.34204,48.83832],[2.34543,48.83761],[2.34893,48.83707],[2.35189,48.83673],[2.36193,48.84003],[2.36493,48.84438],[2.36596,48.845],[2.38856,48.82648],[2.38527,48.8253],[2.37881,48.82148],[2.36334,48.81613],[2.3568,48.81644],[2.3544,48.8175],[2.35167,48.81799],[2.34684,48.81641],[2.34405,48.81644],[2.3441,48.81763],[2.34459,48.81938],[2.34394,48.82028],[2.34242,48.82146],[2.34146,48.82366],[2.34165,48.82641],[2.34131,48.83143],[2.34111,48.83195],[2.34204,48.83832]],[[2.30146,48.82543],[2.32103,48.8415],[2.32155,48.841],[2.32459,48.84365],[2.3364,48.8397],[2.34211,48.83828],[2.34112,48.83198],[2.3415,48.82879],[2.34163,48.8256],[2.3415,48.82325],[2.34249,48.8213],[2.34404,48.82012],[2.34455,48.81936],[2.34416,48.81757],[2.34408,48.8165],[2.33571,48.81681],[2.33288,48.81848],[2.30146,48.82543]],[[2.29237,48.82749],[2.277,48.83376],[2.27426,48.83043],[2.27503,48.82981],[2.2728,48.82896],[2.27056,48.82811],[2.26782,48.82817],[2.2673,48.83111],[2.27065,48.83359],[2.26919,48.83534],[2.26619,48.83472],[2.26413,48.83518],[2.2782,48.84901],[2.28764,48.85568],[2.28996,48.85828],[2.30927,48.84585],[2.31134,48.84529],[2.31648,48.84681],[2.32,48.84517],[2.32455,48.84359],[2.32163,48.84105],[2.32095,48.84162],[2.30146,48.82551],[2.29237,48.82749]],[[2.28007,48.87829],[2.29494,48.87386],[2.29739,48.87119],[2.29904,48.86843],[2.29991,48.86527],[2.30157,48.86457],[2.3018,48.86336],[2.29408,48.86166],[2.28893,48.85759],[2.28601,48.85432],[2.27743,48.84799],[2.26404,48.83512],[2.25786,48.83568],[2.25391,48.8393],[2.25477,48.8454],[2.2503,48.84551],[2.24172,48.84833],[2.2273,48.84856],[2.22593,48.85545],[2.23159,48.86652],[2.23932,48.87047],[2.2467,48.87634],[2.25511,48.8742],[2.2582,48.88052],[2.28007,48.87829]],[[2.27999,48.87836],[2.28325,48.88277],[2.29185,48.88842],[2.29768,48.88965],[2.30619,48.89511],[2.31408,48.89816],[2.32188,48.90061],[2.33013,48.9008],[2.32562,48.88759],[2.32721,48.88345],[2.31691,48.8813],[2.30867,48.8804],[2.29807,48.87815],[2.29502,48.87391],[2.27999,48.87836]],[[2.37038,48.90072],[2.37038,48.89671],[2.37184,48.89536],[2.37029,48.89446],[2.36708,48.88759],[2.36663,48.8866],[2.36472,48.88441],[2.35879,48.88441],[2.34952,48.88368],[2.33974,48.88187],[2.33725,48.88229],[2.32953,48.88443],[2.32792,48.88353],[2.32719,48.88342],[2.3256,48.88762],[2.33021,48.90083],[2.35321,48.90128],[2.37038,48.90072]],[[2.40875,48.87786],[2.40231,48.876],[2.39526,48.87526],[2.39021,48.87555],[2.38772,48.87453],[2.38652,48.87465],[2.38472,48.87386],[2.37682,48.87222],[2.37038,48.87809],[2.37021,48.88277],[2.36892,48.88334],[2.36867,48.88413],[2.36474,48.8844],[2.36678,48.88669],[2.36835,48.8902],[2.37029,48.89451],[2.37175,48.89547],[2.37028,48.89665],[2.37038,48.90078],[2.3769,48.90027],[2.38849,48.90066],[2.39201,48.89982],[2.39381,48.89824],[2.39725,48.88588],[2.40188,48.88176],[2.4066,48.88012],[2.40875,48.87786]],[[2.32077,48.86304],[2.32523,48.86894],[2.32515,48.86942],[2.32802,48.86995],[2.3303,48.86829],[2.35094,48.86341],[2.34735,48.85712],[2.34691,48.85697],[2.34597,48.85537],[2.34453,48.85401],[2.3424,48.85525],[2.34047,48.8568],[2.33725,48.85847],[2.33146,48.85968],[2.32077,48.86304]],[[2.36465,48.84599],[2.3609,48.84864],[2.35467,48.85085],[2.35013,48.85198],[2.34695,48.8533],[2.34455,48.85403],[2.34597,48.8554],[2.34699,48.85696],[2.34733,48.85715],[2.35017,48.86203],[2.3533,48.86124],[2.35678,48.86016],[2.35858,48.85875],[2.36167,48.85726],[2.36433,48.85641],[2.36836,48.85587],[2.3692,48.85281],[2.3663,48.84696],[2.36465,48.84599]],[[2.4145,48.84681],[2.41252,48.83653],[2.40961,48.83427],[2.41407,48.8337],[2.42214,48.83585],[2.42025,48.84059],[2.4193,48.84206],[2.41999,48.84359],[2.42179,48.84455],[2.42445,48.84178],[2.43836,48.84059],[2.43922,48.84455],[2.44085,48.84444],[2.44076,48.84596],[2.4466,48.8459],[2.44634,48.84494],[2.45552,48.8441],[2.46334,48.84223],[2.46977,48.83653],[2.46909,48.83415],[2.46522,48.8315],[2.46428,48.8276],[2.466,48.82726],[2.46479,48.82297],[2.46256,48.81946],[2.45887,48.81715],[2.45389,48.81698],[2.44857,48.81816],[2.4375,48.81844],[2.43733,48.81963],[2.43192,48.82263],[2.42763,48.82415],[2.42196,48.82421],[2.41973,48.8241],[2.41733,48.8246],[2.41107,48.825],[2.40669,48.82698],[2.40351,48.8293],[2.40111,48.82969],[2.39562,48.82805],[2.39072,48.8272],[2.38858,48.82647],[2.36454,48.84613],[2.36643,48.84703],[2.36918,48.85313],[2.37038,48.85313],[2.37154,48.85242],[2.38017,48.85037],[2.38446,48.85008],[2.39596,48.84833],[2.4145,48.84681]],[[2.4133,48.86527],[2.41414,48.85905],[2.41398,48.85381],[2.41468,48.85257],[2.41527,48.85103],[2.41441,48.8468],[2.39904,48.8481],[2.3993,48.84879],[2.39835,48.85126],[2.39441,48.85652],[2.38965,48.85847],[2.38737,48.86296],[2.3835,48.86617],[2.38319,48.86714],[2.37682,48.87223],[2.38497,48.87396],[2.38651,48.87469],[2.38789,48.87453],[2.39037,48.87554],[2.39529,48.87521],[2.40221,48.87595],[2.40858,48.87785],[2.41097,48.87431],[2.41338,48.87109],[2.4133,48.86527]]];
+
+  if (typeof maplibregl === "undefined") {
+    document.getElementById("fallback").style.display = "flex";
+    document.getElementById("ui").style.display = "none";
+    return;
+  }
+
+  var PARIS_CENTER = [2.3522, 48.8566];
+
+  /* ===== Données utilisateur ===== */
+  var LS_KEY = "paris-run-map-3d:strokes";
+  var strokes = [];
+  try { strokes = JSON.parse(localStorage.getItem(LS_KEY) || "[]"); } catch (e) { strokes = []; }
+  if (!Array.isArray(strokes)) strokes = [];
+
+  var COLORS = [
+    { c: "#22ff88", n: "OK" },
+    { c: "#ff2d3f", n: "NON" },
+    { c: "#ffd166", n: "" },
+    { c: "#4dc9ff", n: "" },
+    { c: "#b366ff", n: "" }
+  ];
+  var curColor = COLORS[0].c, curWidth = 3, mode = "draw";
+
+  function fc() {
+    return {
+      type: "FeatureCollection",
+      features: strokes.map(function (s) {
+        return {
+          type: "Feature",
+          properties: { color: s.color, width: s.width },
+          geometry: { type: "LineString", coordinates: s.coords }
+        };
+      })
+    };
+  }
+  function strokeLen(s) {
+    var d = 0;
+    for (var i = 0; i < s.coords.length - 1; i++) {
+      var x1 = s.coords[i][0], y1 = s.coords[i][1], x2 = s.coords[i + 1][0], y2 = s.coords[i + 1][1];
+      var dx = (x2 - x1) * Math.cos(48.85 * Math.PI / 180), dy = y2 - y1;
+      d += Math.sqrt(dx * dx + dy * dy) * 111.32;
+    }
+    return d;
+  }
+  var saveT = null;
+  function save() {
+    clearTimeout(saveT);
+    saveT = setTimeout(function () {
+      try { localStorage.setItem(LS_KEY, JSON.stringify(strokes)); } catch (e) {}
+    }, 250);
+  }
+  function update() {
+    var src = map.getSource("user");
+    if (src) src.setData(fc());
+    save();
+    var green = 0, red = 0, kg = 0, kr = 0;
+    strokes.forEach(function (s) {
+      var l = strokeLen(s);
+      if (s.color === "#22ff88") { green++; kg += l; }
+      else if (s.color === "#ff2d3f") { red++; kr += l; }
+    });
+    var parts = [];
+    if (green) parts.push('<span style="color:#22ff88">● ' + green + ' parcours · ' + kg.toFixed(1) + ' km</span>');
+    if (red) parts.push('<span style="color:#ff2d3f">● ' + red + ' inaccessibles · ' + kr.toFixed(1) + ' km</span>');
+    if (!parts.length) parts.push("Aucun trait — passez en mode Dessiner et glissez sur la carte.");
+    document.getElementById("stats").innerHTML = parts.join("<br>");
+  }
+
+  /* ===== Carte ===== */
+  var map = new maplibregl.Map({
+    container: "map",
+    maxBounds: [[1.95, 48.66], [2.75, 49.05]],
+    center: [2.3522, 48.8566],
+    zoom: 12.1,
+    pitch: 55,
+    bearing: -22,
+    antialias: true,
+    preserveDrawingBuffer: true,
+    attributionControl: { compact: true },
+    style: {
+      version: 8,
+      glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
+      sources: {
+        ofm: { type: "vector", url: "https://tiles.openfreemap.org/planet" },
+        user: { type: "geojson", data: fc() }
+      },
+      layers: [
+        { id: "bg", type: "background", paint: { "background-color": "#000" } },
+        { id: "water", type: "fill", source: "ofm", "source-layer": "water",
+          paint: { "fill-color": "#0a1524", "fill-opacity": 0.9 } },
+        { id: "waterway", type: "line", source: "ofm", "source-layer": "waterway",
+          paint: { "line-color": "#0a1524", "line-width": 1.5 } },
+        { id: "parks", type: "fill", source: "ofm", "source-layer": "landuse",
+          filter: ["in", ["get", "class"], ["literal", ["park", "grass", "forest", "cemetery"]]],
+          paint: { "fill-color": "#0a120c", "fill-opacity": 0.8 } },
+        { id: "roads", type: "line", source: "ofm", "source-layer": "transportation",
+          paint: {
+            "line-color": ["match", ["get", "class"],
+              "motorway", "#39445c", "trunk", "#333d52", "primary", "#2d3648",
+              "secondary", "#272f3f", "#1e2531"],
+            "line-width": ["interpolate", ["linear"], ["zoom"],
+              11, ["match", ["get", "class"], "motorway", 1.6, "trunk", 1.4, "primary", 1.1, 0.7],
+              15, ["match", ["get", "class"], "motorway", 6, "trunk", 5, "primary", 4, 2.6]]
+          } },
+        { id: "buildings", type: "fill-extrusion", source: "ofm", "source-layer": "building",
+          paint: {
+            "fill-extrusion-color": ["interpolate", ["linear"], ["coalesce", ["get", "render_height"], 8],
+              0, "#181c26", 25, "#1e232f", 80, "#283043", 200, "#39435c"],
+            "fill-extrusion-height": ["coalesce", ["get", "render_height"], 8],
+            "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
+            "fill-extrusion-opacity": 0.95,
+            "fill-extrusion-vertical-gradient": true
+          } },
+        { id: "major-roads", type: "line", source: "ofm", "source-layer": "transportation",
+          filter: ["in", ["get", "class"], ["literal", ["motorway", "trunk", "primary"]]],
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: {
+            "line-color": ["match", ["get", "class"],
+              "motorway", "#4a5876", "trunk", "#414e6a", "#39445c"],
+            "line-width": ["interpolate", ["linear"], ["zoom"],
+              11, ["match", ["get", "class"], "motorway", 2, "trunk", 1.8, 1.5],
+              15, ["match", ["get", "class"], "motorway", 6.5, "trunk", 5.5, 4.5]]
+          } },
+        { id: "user-glow", type: "line", source: "user",
+          paint: {
+            "line-color": ["get", "color"],
+            "line-width": ["interpolate", ["linear"], ["zoom"], 10, ["*", 6, ["get", "width"]], 16, ["*", 14, ["get", "width"]]],
+            "line-opacity": 0.22,
+            "line-blur": 4
+          } },
+        { id: "user-core", type: "line", source: "user",
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: {
+            "line-color": ["get", "color"],
+            "line-width": ["interpolate", ["linear"], ["zoom"], 10, ["*", 1.6, ["get", "width"]], 16, ["*", 4, ["get", "width"]]],
+            "line-opacity": 0.95
+          } }
+      ]
+    }
+  });
+  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-left");
+
+  map.on("load", function () {
+    // Vignette : dégradé radial assombrit la périphérie (Paris reste clair au centre)
+    var cv = document.createElement("canvas");
+    cv.width = 512; cv.height = 512;
+    var ctx = cv.getContext("2d");
+    var g = ctx.createRadialGradient(256, 256, 100, 256, 256, 256);
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(0.46, "rgba(0,0,0,0)");
+    g.addColorStop(0.62, "rgba(0,0,0,0.55)");
+    g.addColorStop(0.78, "rgba(0,0,0,0.9)");
+    g.addColorStop(1, "rgba(0,0,0,0.94)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 512, 512);
+    map.addSource("vignette", {
+      type: "image",
+      url: cv.toDataURL(),
+      coordinates: [
+        [2.14, 48.99], [2.57, 48.99], [2.57, 48.72], [2.14, 48.72]
+      ]
+    });
+    map.addLayer({
+      id: "dim-mask",
+      type: "raster",
+      source: "vignette",
+      paint: { "raster-opacity": 1, "raster-fade-duration": 0 }
+    }, "major-roads");
+    update();
+  });
+
+  /* ===== Dessin ===== */
+  var drawing = false, curCoords = [], lastPt = null;
+
+  function unproject(e) {
+    var r = map.getCanvas().getBoundingClientRect();
+    return map.unproject([e.clientX - r.left, e.clientY - r.top]);
+  }
+  function pixDist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+
+  var canvas = map.getCanvas();
+  canvas.addEventListener("pointerdown", function (e) {
+    if (e.button !== 0) return;
+    if (mode === "draw") {
+      e.preventDefault();
+      drawing = true;
+      curCoords = [];
+      var ll = unproject(e);
+      curCoords.push([ll.lng, ll.lat]);
+      canvas.setPointerCapture(e.pointerId);
+      canvas.style.cursor = "crosshair";
+    } else if (mode === "erase") {
+      eraseAt(e);
+    }
+  });
+  canvas.addEventListener("pointermove", function (e) {
+    if (!drawing) return;
+    var ll = unproject(e);
+    var p = map.project(ll);
+    if (lastPt && pixDist(p, lastPt) < 5) return;
+    lastPt = p;
+    curCoords.push([ll.lng, ll.lat]);
+    pushLive();
+  });
+  function endStroke() {
+    if (!drawing) return;
+    drawing = false; lastPt = null;
+    canvas.style.cursor = "";
+    if (curCoords.length > 1) {
+      strokes.push({ color: curColor, width: curWidth, coords: curCoords });
+    }
+    curCoords = [];
+    update();
+  }
+  canvas.addEventListener("pointerup", endStroke);
+  canvas.addEventListener("pointercancel", endStroke);
+
+  function pushLive() {
+    // aperçu du trait en cours : poussé comme trait temporaire
+    var live = strokes.concat([{ color: curColor, width: curWidth, coords: curCoords }]);
+    var src = map.getSource("user");
+    if (src && curCoords.length > 1) {
+      src.setData({
+        type: "FeatureCollection",
+        features: live.map(function (s) {
+          return { type: "Feature", properties: { color: s.color, width: s.width },
+            geometry: { type: "LineString", coordinates: s.coords } };
+        })
+      });
+    }
+  }
+
+  function eraseAt(e) {
+    var ll = unproject(e);
+    var target = map.project(ll);
+    var before = strokes.length;
+    strokes = strokes.filter(function (s) {
+      for (var i = 0; i < s.coords.length; i++) {
+        var p = map.project(s.coords[i]);
+        if (Math.hypot(p.x - target.x, p.y - target.y) < 12) return false;
+      }
+      return true;
+    });
+    if (strokes.length !== before) update();
+  }
+
+  /* ===== UI ===== */
+  function setMode(m) {
+    mode = m;
+    ["btnDraw", "btnPan", "btnErase"].forEach(function (id) {
+      document.getElementById(id).classList.remove("active");
+    });
+    document.getElementById(m === "draw" ? "btnDraw" : m === "pan" ? "btnPan" : "btnErase").classList.add("active");
+    if (m === "pan") { map.dragPan.enable(); canvas.style.cursor = ""; }
+    else { map.dragPan.disable(); canvas.style.cursor = m === "draw" ? "crosshair" : "not-allowed"; }
+  }
+  document.getElementById("btnDraw").onclick = function () { setMode("draw"); };
+  document.getElementById("btnPan").onclick = function () { setMode("pan"); };
+  document.getElementById("btnErase").onclick = function () { setMode("erase"); };
+
+  var pal = document.getElementById("palette");
+  COLORS.forEach(function (o, i) {
+    var d = document.createElement("div");
+    d.className = "swatch" + (i === 0 ? " active" : "");
+    d.style.background = o.c;
+    d.title = o.n === "OK" ? "Parcouru" : o.n === "NON" ? "Inaccessible" : "Couleur libre";
+    if (o.n) d.textContent = o.n;
+    d.onclick = function () {
+      curColor = o.c;
+      pal.querySelectorAll(".swatch").forEach(function (s) { s.classList.remove("active"); });
+      d.classList.add("active");
+      setMode("draw");
+    };
+    pal.appendChild(d);
+  });
+
+  document.getElementById("width").oninput = function () {
+    curWidth = parseFloat(this.value);
+    document.getElementById("wVal").textContent = curWidth;
+  };
+  document.getElementById("btnUndo").onclick = function () { strokes.pop(); update(); };
+  document.getElementById("btnClear").onclick = function () {
+    if (confirm("Effacer tous les traits ?")) { strokes = []; update(); }
+  };
+
+  document.getElementById("btn3d").onclick = function () {
+    this.classList.add("active"); document.getElementById("btn2d").classList.remove("active");
+    map.easeTo({ pitch: 55, duration: 800 });
+  };
+  document.getElementById("btn2d").onclick = function () {
+    this.classList.add("active"); document.getElementById("btn3d").classList.remove("active");
+    map.easeTo({ pitch: 0, duration: 800 });
+  };
+  document.getElementById("btnReset").onclick = function () {
+    map.easeTo({ center: [2.3522, 48.8566], zoom: 12.1, pitch: 55, bearing: -22, duration: 900 });
+  };
+
+  document.getElementById("tglB").onclick = function () {
+    var v = this.classList.toggle("active");
+    map.setLayoutProperty("buildings", "visibility", v ? "visible" : "none");
+  };
+  document.getElementById("tglR").onclick = function () {
+    var v = this.classList.toggle("active");
+    map.setLayoutProperty("roads", "visibility", v ? "visible" : "none");
+  };
+
+  document.getElementById("btnGeo").onclick = function () {
+    var blob = new Blob([JSON.stringify(fc(), null, 1)], { type: "application/geo+json" });
+    dl(URL.createObjectURL(blob), "paris-run.geojson");
+  };
+  document.getElementById("btnPng").onclick = function () {
+    try { dl(map.getCanvas().toDataURL("image/png"), "paris-run.png"); }
+    catch (e) { alert("Export impossible : essayez après un déplacement de la carte."); }
+  };
+  document.getElementById("btnImp").onclick = function () { document.getElementById("fileImp").click(); };
+  document.getElementById("fileImp").onchange = function () {
+    var f = this.files[0]; if (!f) return;
+    var rd = new FileReader();
+    rd.onload = function () {
+      try {
+        var j = JSON.parse(rd.result);
+        var feats = j.type === "FeatureCollection" ? j.features : [j];
+        var n = 0;
+        feats.forEach(function (ft) {
+          var g = ft.geometry || ft;
+          if (g.type === "LineString") {
+            strokes.push({ color: (ft.properties && ft.properties.color) || curColor,
+              width: (ft.properties && ft.properties.width) || curWidth, coords: g.coordinates });
+            n++;
+          }
+        });
+        update();
+        alert(n + " trait(s) importé(s).");
+      } catch (e) { alert("Fichier GeoJSON invalide."); }
+    };
+    rd.readAsText(f);
+    this.value = "";
+  };
+  function dl(href, name) {
+    var a = document.createElement("a");
+    a.href = href; a.download = name; a.click();
+  }
+})();
+</script>
+</body>
+</html>
