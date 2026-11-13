@@ -25,8 +25,8 @@
   .row { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
   button {
     flex: 1; min-width: 0; background: #161b23; color: #dfe4ec; border: 1px solid #2a3140;
-    border-radius: 8px; padding: 7px 8px; font-size: 11.5px; cursor: pointer; transition: .15s;
-    white-space: nowrap;
+    border-radius: 8px; padding: 6px 3px; font-size: 10px; cursor: pointer; transition: .15s;
+    line-height: 1.2;
   }
   button:hover { background: #202734; border-color: #3b4050; }
   button.active { background: #22ff88; color: #05130c; border-color: #22ff88; font-weight: 600; }
@@ -40,6 +40,8 @@
   input[type=range] { width: 100%; accent-color: #22ff88; }
   .stats { font-size: 11px; color: #9aa4b2; margin-top: 10px; line-height: 1.6; border-top: 1px solid #232a37; padding-top: 8px; }
   .stats b { color: #dfe4ec; }
+  .bar { height: 8px; background: #161b23; border: 1px solid #232a37; border-radius: 5px; margin: 7px 0 3px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: linear-gradient(90deg, #22ff88, #4dc9ff); border-radius: 5px; transition: width .4s; }
   .legend { display: flex; gap: 10px; margin-top: 8px; font-size: 10.5px; color: #9aa4b2; flex-wrap: wrap; }
   .legend span { display: inline-flex; align-items: center; gap: 5px; }
   .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
@@ -66,7 +68,8 @@
   <p class="sub">Tracez vos parcours à la main · fond noir · Paris only</p>
 
   <div class="row" id="modeRow">
-    <button id="btnDraw" class="active">✏️ Dessiner</button>
+    <button id="btnSeg" class="active">📏 Trait</button>
+    <button id="btnFree">✍️ Libre</button>
     <button id="btnPan">🖐 Naviguer</button>
     <button id="btnErase">🧽 Gommer</button>
   </div>
@@ -83,7 +86,6 @@
 
   <div class="row">
     <button id="btnUndo">↩︎ Annuler</button>
-    <button id="btnClear" class="danger">Tout effacer</button>
   </div>
 
   <div class="lbl">Vue</div>
@@ -97,6 +99,7 @@
   <div class="row">
     <button id="tglB" class="active">🏢 Bâtiments</button>
     <button id="tglR" class="active">🛣 Rues</button>
+    <button id="tglN" class="active">🏷 Noms</button>
   </div>
 
   <div class="lbl">Données</div>
