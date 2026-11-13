@@ -98,8 +98,8 @@
   <div class="lbl">Couches</div>
   <div class="row">
     <button id="tglB" class="active">🏢 Bâtiments</button>
-    <button id="tglR" class="active">🛣 Rues</button>
-    <button id="tglN" class="active">🏷 Noms</button>
+    <button id="tglR" class="active">🛣️ Rues</button>
+    <button id="tglN" class="active">🏷️ Noms</button>
   </div>
 
   <div class="lbl">Données</div>
@@ -113,7 +113,7 @@
   <div class="stats" id="stats"></div>
 </div>
 
-<div class="hint">🖱 clic gauche : dessiner · clic droit maintenu : pivoter / incliner · molette : zoom · glisser en mode Naviguer</div>
+<div class="hint">📏 clic : placer un point · double-clic ou Entrée : terminer le trait · Échap : annuler · clic droit : pivoter · molette : zoom</div>
 
 <div class="modal" id="fallback"><div class="box">
   <h2>🕶️ L'aperçu est limité ici</h2>
@@ -149,7 +149,7 @@
     { c: "#4dc9ff", n: "" },
     { c: "#b366ff", n: "" }
   ];
-  var curColor = COLORS[0].c, curWidth = 3, mode = "draw";
+  var curColor = COLORS[0].c, curWidth = 3, mode = "seg";
 
   function fc() {
     return {
@@ -180,20 +180,22 @@
     }, 250);
   }
   function update() {
-    var src = map.getSource("user");
-    if (src) src.setData(fc());
+    renderAll();
     save();
-    var green = 0, red = 0, kg = 0, kr = 0;
+    var kg = 0, kr = 0;
     strokes.forEach(function (s) {
       var l = strokeLen(s);
-      if (s.color === "#22ff88") { green++; kg += l; }
-      else if (s.color === "#ff2d3f") { red++; kr += l; }
+      if (s.color === "#22ff88") kg += l;
+      else if (s.color === "#ff2d3f") kr += l;
     });
-    var parts = [];
-    if (green) parts.push('<span style="color:#22ff88">● ' + green + ' parcours · ' + kg.toFixed(1) + ' km</span>');
-    if (red) parts.push('<span style="color:#ff2d3f">● ' + red + ' inaccessibles · ' + kr.toFixed(1) + ' km</span>');
-    if (!parts.length) parts.push("Aucun trait — passez en mode Dessiner et glissez sur la carte.");
-    document.getElementById("stats").innerHTML = parts.join("<br>");
+    var TOTAL = 1700;
+    var pct = Math.min(100, kg / TOTAL * 100);
+    var html = '<b>' + kg.toFixed(1) + ' km</b> parcourus / ' + TOTAL + ' km de rues parisiennes' +
+      '<div class="bar"><i style="width:' + pct.toFixed(2) + '%"></i></div>' +
+      '<span>' + pct.toFixed(1) + ' % de Paris couvert</span>';
+    if (kr > 0) html += '<br><span style="color:#ff2d3f">● ' + kr.toFixed(1) + ' km inaccessibles</span>';
+    if (!strokes.length) html += '<br><span style="color:#667080">Cliquez sur la carte pour placer des points.</span>';
+    document.getElementById("stats").innerHTML = html;
   }
 
   /* ===== Carte ===== */
@@ -241,6 +243,16 @@
             "fill-extrusion-opacity": 0.95,
             "fill-extrusion-vertical-gradient": true
           } },
+        { id: "street-names", type: "symbol", source: "ofm", "source-layer": "transportation_name",
+          minzoom: 13,
+          layout: {
+            "symbol-placement": "line",
+            "text-field": ["coalesce", ["get", "name:latin"], ["get", "name"]],
+            "text-font": ["Noto Sans Regular"],
+            "text-size": ["interpolate", ["linear"], ["zoom"], 13, 9.5, 16, 13],
+            "text-max-angle": 30
+          },
+          paint: { "text-color": "#98a2b8", "text-halo-color": "#000", "text-halo-width": 1.6 } },
         { id: "major-roads", type: "line", source: "ofm", "source-layer": "transportation",
           filter: ["in", ["get", "class"], ["literal", ["motorway", "trunk", "primary"]]],
           layout: { "line-cap": "round", "line-join": "round" },
@@ -301,6 +313,7 @@
 
   /* ===== Dessin ===== */
   var drawing = false, curCoords = [], lastPt = null;
+  var segCoords = [], hoverLL = null;
 
   function unproject(e) {
     var r = map.getCanvas().getBoundingClientRect();
@@ -308,10 +321,28 @@
   }
   function pixDist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 
+  function renderAll() {
+    var src = map.getSource("user");
+    if (!src) return;
+    var temp = [];
+    if (drawing && curCoords.length > 1) temp.push({ color: curColor, width: curWidth, coords: curCoords });
+    if (mode === "seg" && segCoords.length) {
+      var c = segCoords.concat(hoverLL ? [hoverLL] : []);
+      if (c.length > 1) temp.push({ color: curColor, width: curWidth, coords: c });
+    }
+    src.setData({
+      type: "FeatureCollection",
+      features: strokes.concat(temp).map(function (s) {
+        return { type: "Feature", properties: { color: s.color, width: s.width },
+          geometry: { type: "LineString", coordinates: s.coords } };
+      })
+    });
+  }
+
   var canvas = map.getCanvas();
   canvas.addEventListener("pointerdown", function (e) {
     if (e.button !== 0) return;
-    if (mode === "draw") {
+    if (mode === "free") {
       e.preventDefault();
       drawing = true;
       curCoords = [];
@@ -319,18 +350,28 @@
       curCoords.push([ll.lng, ll.lat]);
       canvas.setPointerCapture(e.pointerId);
       canvas.style.cursor = "crosshair";
+    } else if (mode === "seg") {
+      e.preventDefault();
+      var ll2 = unproject(e);
+      segCoords.push([ll2.lng, ll2.lat]);
+      renderAll();
     } else if (mode === "erase") {
       eraseAt(e);
     }
   });
   canvas.addEventListener("pointermove", function (e) {
-    if (!drawing) return;
-    var ll = unproject(e);
-    var p = map.project(ll);
-    if (lastPt && pixDist(p, lastPt) < 5) return;
-    lastPt = p;
-    curCoords.push([ll.lng, ll.lat]);
-    pushLive();
+    if (mode === "free" && drawing) {
+      var ll = unproject(e);
+      var p = map.project(ll);
+      if (lastPt && pixDist(p, lastPt) < 5) return;
+      lastPt = p;
+      curCoords.push([ll.lng, ll.lat]);
+      renderAll();
+    } else if (mode === "seg" && segCoords.length) {
+      var ll2 = unproject(e);
+      hoverLL = [ll2.lng, ll2.lat];
+      renderAll();
+    }
   });
   function endStroke() {
     if (!drawing) return;
@@ -342,22 +383,27 @@
     curCoords = [];
     update();
   }
-  canvas.addEventListener("pointerup", endStroke);
-  canvas.addEventListener("pointercancel", endStroke);
+  canvas.addEventListener("pointerup", function (e) {
+    if (mode === "free") endStroke();
+  });
+  canvas.addEventListener("pointercancel", function () {
+    if (mode === "free") endStroke();
+  });
+  canvas.addEventListener("dblclick", function (e) {
+    if (mode === "seg") { e.preventDefault(); endSeg(); }
+  });
+  window.addEventListener("keydown", function (e) {
+    if (mode !== "seg") return;
+    if (e.key === "Enter") endSeg();
+    else if (e.key === "Escape") { segCoords = []; hoverLL = null; renderAll(); }
+  });
 
-  function pushLive() {
-    // aperçu du trait en cours : poussé comme trait temporaire
-    var live = strokes.concat([{ color: curColor, width: curWidth, coords: curCoords }]);
-    var src = map.getSource("user");
-    if (src && curCoords.length > 1) {
-      src.setData({
-        type: "FeatureCollection",
-        features: live.map(function (s) {
-          return { type: "Feature", properties: { color: s.color, width: s.width },
-            geometry: { type: "LineString", coordinates: s.coords } };
-        })
-      });
+  function endSeg() {
+    if (segCoords.length >= 2) {
+      strokes.push({ color: curColor, width: curWidth, coords: segCoords });
     }
+    segCoords = []; hoverLL = null;
+    update();
   }
 
   function eraseAt(e) {
@@ -377,14 +423,21 @@
   /* ===== UI ===== */
   function setMode(m) {
     mode = m;
-    ["btnDraw", "btnPan", "btnErase"].forEach(function (id) {
+    ["btnSeg", "btnFree", "btnPan", "btnErase"].forEach(function (id) {
       document.getElementById(id).classList.remove("active");
     });
-    document.getElementById(m === "draw" ? "btnDraw" : m === "pan" ? "btnPan" : "btnErase").classList.add("active");
+    var ids = { seg: "btnSeg", free: "btnFree", pan: "btnPan", erase: "btnErase" };
+    document.getElementById(ids[m]).classList.add("active");
     if (m === "pan") { map.dragPan.enable(); canvas.style.cursor = ""; }
-    else { map.dragPan.disable(); canvas.style.cursor = m === "draw" ? "crosshair" : "not-allowed"; }
+    else {
+      map.dragPan.disable();
+      canvas.style.cursor = m === "erase" ? "not-allowed" : "crosshair";
+    }
+    map.doubleClickZoom[m === "seg" ? "disable" : "enable"]();
+    if (m !== "seg") { segCoords = []; hoverLL = null; renderAll(); }
   }
-  document.getElementById("btnDraw").onclick = function () { setMode("draw"); };
+  document.getElementById("btnSeg").onclick = function () { setMode("seg"); };
+  document.getElementById("btnFree").onclick = function () { setMode("free"); };
   document.getElementById("btnPan").onclick = function () { setMode("pan"); };
   document.getElementById("btnErase").onclick = function () { setMode("erase"); };
 
@@ -399,7 +452,7 @@
       curColor = o.c;
       pal.querySelectorAll(".swatch").forEach(function (s) { s.classList.remove("active"); });
       d.classList.add("active");
-      setMode("draw");
+      setMode("seg");
     };
     pal.appendChild(d);
   });
@@ -409,9 +462,6 @@
     document.getElementById("wVal").textContent = curWidth;
   };
   document.getElementById("btnUndo").onclick = function () { strokes.pop(); update(); };
-  document.getElementById("btnClear").onclick = function () {
-    if (confirm("Effacer tous les traits ?")) { strokes = []; update(); }
-  };
 
   document.getElementById("btn3d").onclick = function () {
     this.classList.add("active"); document.getElementById("btn2d").classList.remove("active");
@@ -432,6 +482,10 @@
   document.getElementById("tglR").onclick = function () {
     var v = this.classList.toggle("active");
     map.setLayoutProperty("roads", "visibility", v ? "visible" : "none");
+  };
+  document.getElementById("tglN").onclick = function () {
+    var v = this.classList.toggle("active");
+    map.setLayoutProperty("street-names", "visibility", v ? "visible" : "none");
   };
 
   document.getElementById("btnGeo").onclick = function () {
