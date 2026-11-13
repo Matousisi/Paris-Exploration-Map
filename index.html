@@ -78,6 +78,7 @@
   <div class="row" id="palette"></div>
   <div class="legend">
     <span><i class="dot" style="background:#22ff88"></i> parcouru</span>
+    <span><i class="dot" style="background:#b366ff"></i> nouveau (session)</span>
     <span><i class="dot" style="background:#ff2d3f"></i> inaccessible</span>
   </div>
 
@@ -107,6 +108,9 @@
     <button id="btnGeo">⬇ GeoJSON</button>
     <button id="btnPng">⬇ PNG</button>
     <button id="btnImp">⬆ Importer</button>
+  </div>
+  <div class="row">
+    <button id="btnValidate">✔ Valider la session (violet → vert)</button>
   </div>
   <input type="file" id="fileImp" accept=".geojson,.json" style="display:none" />
 
@@ -146,9 +150,9 @@
     { c: "#22ff88", n: "OK" },
     { c: "#ff2d3f", n: "NON" },
     { c: "#ffd166", n: "" },
-    { c: "#4dc9ff", n: "" },
-    { c: "#b366ff", n: "" }
+    { c: "#4dc9ff", n: "" }
   ];
+  var VIOLET = "#b366ff";
   var curColor = COLORS[0].c, curWidth = 3, mode = "seg";
 
   function fc() {
@@ -157,11 +161,21 @@
       features: strokes.map(function (s) {
         return {
           type: "Feature",
-          properties: { color: s.color, width: s.width },
+          properties: { color: s.fresh ? VIOLET : s.color, width: s.width },
           geometry: { type: "LineString", coordinates: s.coords }
         };
       })
     };
+  }
+  function computeStats() {
+    var kg = 0, kv = 0, kr = 0;
+    strokes.forEach(function (s) {
+      var l = strokeLen(s);
+      if (s.color === "#22ff88") { if (s.fresh) kv += l; else kg += l; }
+      else if (s.color === "#ff2d3f") kr += l;
+    });
+    var TOTAL = 1700;
+    return { kg: kg, kv: kv, kr: kr, TOTAL: TOTAL, pct: Math.min(100, (kg + kv) / TOTAL * 100) };
   }
   function strokeLen(s) {
     var d = 0;
@@ -182,18 +196,12 @@
   function update() {
     renderAll();
     save();
-    var kg = 0, kr = 0;
-    strokes.forEach(function (s) {
-      var l = strokeLen(s);
-      if (s.color === "#22ff88") kg += l;
-      else if (s.color === "#ff2d3f") kr += l;
-    });
-    var TOTAL = 1700;
-    var pct = Math.min(100, kg / TOTAL * 100);
-    var html = '<b>' + kg.toFixed(1) + ' km</b> parcourus / ' + TOTAL + ' km de rues parisiennes' +
-      '<div class="bar"><i style="width:' + pct.toFixed(2) + '%"></i></div>' +
-      '<span>' + pct.toFixed(1) + ' % de Paris couvert</span>';
-    if (kr > 0) html += '<br><span style="color:#ff2d3f">● ' + kr.toFixed(1) + ' km inaccessibles</span>';
+    var st = computeStats();
+    var html = '<b>' + (st.kg + st.kv).toFixed(1) + ' km</b> parcourus / ' + st.TOTAL + ' km de rues parisiennes' +
+      '<div class="bar"><i style="width:' + st.pct.toFixed(2) + '%"></i></div>' +
+      '<span>' + st.pct.toFixed(1) + ' % de Paris couvert</span>';
+    if (st.kv > 0) html += '<br><span style="color:' + VIOLET + '">● ' + st.kv.toFixed(1) + ' km nouveaux (session)</span>';
+    if (st.kr > 0) html += '<br><span style="color:#ff2d3f">● ' + st.kr.toFixed(1) + ' km inaccessibles</span>';
     if (!strokes.length) html += '<br><span style="color:#667080">Cliquez sur la carte pour placer des points.</span>';
     document.getElementById("stats").innerHTML = html;
   }
@@ -262,13 +270,6 @@
             "line-width": ["interpolate", ["linear"], ["zoom"],
               11, ["match", ["get", "class"], "motorway", 2, "trunk", 1.8, 1.5],
               15, ["match", ["get", "class"], "motorway", 6.5, "trunk", 5.5, 4.5]]
-          } },
-        { id: "user-glow", type: "line", source: "user",
-          paint: {
-            "line-color": ["get", "color"],
-            "line-width": ["interpolate", ["linear"], ["zoom"], 10, ["*", 6, ["get", "width"]], 16, ["*", 14, ["get", "width"]]],
-            "line-opacity": 0.22,
-            "line-blur": 4
           } },
         { id: "user-core", type: "line", source: "user",
           layout: { "line-cap": "round", "line-join": "round" },
@@ -378,7 +379,7 @@
     drawing = false; lastPt = null;
     canvas.style.cursor = "";
     if (curCoords.length > 1) {
-      strokes.push({ color: curColor, width: curWidth, coords: curCoords });
+      strokes.push({ color: curColor, width: curWidth, coords: curCoords, fresh: curColor === "#22ff88" });
     }
     curCoords = [];
     update();
@@ -400,7 +401,7 @@
 
   function endSeg() {
     if (segCoords.length >= 2) {
-      strokes.push({ color: curColor, width: curWidth, coords: segCoords });
+      strokes.push({ color: curColor, width: curWidth, coords: segCoords, fresh: curColor === "#22ff88" });
     }
     segCoords = []; hoverLL = null;
     update();
@@ -493,8 +494,45 @@
     dl(URL.createObjectURL(blob), "paris-run.geojson");
   };
   document.getElementById("btnPng").onclick = function () {
-    try { dl(map.getCanvas().toDataURL("image/png"), "paris-run.png"); }
+    try {
+      var src = map.getCanvas();
+      var out = document.createElement("canvas");
+      out.width = src.width; out.height = src.height;
+      var ctx = out.getContext("2d");
+      ctx.drawImage(src, 0, 0);
+      var st = computeStats();
+      var lines = [
+        (st.kg + st.kv).toFixed(1) + " km parcourus / " + st.TOTAL + " km  (" + st.pct.toFixed(1) + " %)",
+        st.kv.toFixed(1) + " km nouveaux (session)",
+        st.kr.toFixed(1) + " km inaccessibles"
+      ];
+      var pad = 18, lh = 26, w = 330, h = pad * 2 + lines.length * lh;
+      var x = 16, y = out.height - h - 16;
+      ctx.fillStyle = "rgba(8,10,14,0.85)";
+      ctx.strokeStyle = "rgba(255,255,255,0.15)";
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x, y, w, h, 10); else ctx.rect(x, y, w, h);
+      ctx.fill(); ctx.stroke();
+      ctx.font = "15px 'Segoe UI', system-ui, sans-serif";
+      ctx.textBaseline = "top";
+      var cols = ["#22ff88", "#b366ff", "#ff2d3f"];
+      lines.forEach(function (t, i) {
+        ctx.fillStyle = cols[i];
+        ctx.beginPath();
+        ctx.arc(x + 14, y + pad + i * lh + 8, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = i === 0 ? "#ffffff" : cols[i];
+        ctx.fillText(t, x + 26, y + pad + i * lh);
+      });
+      dl(out.toDataURL("image/png"), "paris-run.png");
+    }
     catch (e) { alert("Export impossible : essayez après un déplacement de la carte."); }
+  };
+  document.getElementById("btnValidate").onclick = function () {
+    var n = 0;
+    strokes.forEach(function (s) { if (s.fresh) { s.fresh = false; n++; } });
+    if (n) update();
+    else alert("Aucun nouveau trait à valider dans cette session.");
   };
   document.getElementById("btnImp").onclick = function () { document.getElementById("fileImp").click(); };
   document.getElementById("fileImp").onchange = function () {
