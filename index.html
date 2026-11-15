@@ -250,7 +250,7 @@
         { id: "roads", type: "line", source: "ofm", "source-layer": "transportation",
           filter: ["all",
             ["!=", ["get", "subclass"], "sidewalk"],
-            ["!in", ["get", "class"], ["literal", ["cycleway", "service", "track"]]]],
+            ["match", ["get", "class"], ["cycleway", "service", "track"], false, true]],
           paint: {
             "line-color": ["match", ["get", "class"],
               "motorway", "#39445c", "trunk", "#333d52", "primary", "#2d3648",
@@ -302,6 +302,18 @@
     }
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-left");
+
+  var mapLoaded = false;
+  map.on("load", function () { mapLoaded = true; });
+  map.on("error", function (e) {
+    if (!mapLoaded && e && e.error) {
+      var m = document.getElementById("errbox") || document.body.appendChild(document.createElement("div"));
+      m.id = "errbox";
+      m.style.cssText = "position:absolute;top:12px;right:12px;z-index:99;background:#3a1220;color:#ffb3c0;" +
+        "border:1px solid rgba(255,45,63,.4);border-radius:10px;padding:10px 14px;font-size:11px;max-width:340px;line-height:1.6;";
+      m.innerHTML = "⚠️ Carte : " + (e.error.message || e.error);
+    }
+  });
 
   map.on("load", function () {
     // Vignette : dégradé radial assombrit la périphérie (Paris reste clair au centre)
