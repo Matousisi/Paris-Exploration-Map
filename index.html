@@ -62,6 +62,9 @@
 </head>
 <body>
 <div id="map"></div>
+<div id="loadmsg" style="position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;background:#000;color:#9aa4b2;font-size:14px;text-align:center;line-height:1.8;">
+  <div>⏳ Chargement de la carte…<br><span id="loadsub" style="font-size:11px;color:#667080"></span></div>
+</div>
 
 <div class="panel" id="ui">
   <h1>PARIS RUN MAP 3D</h1>
@@ -287,6 +290,28 @@
     }
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-left");
+
+  var loaded = false, tileErrors = 0;
+  var loadmsg = document.getElementById("loadmsg");
+  var loadsub = document.getElementById("loadsub");
+  map.on("load", function () { loaded = true; loadmsg.style.display = "none"; });
+  map.on("error", function (e) {
+    if (e && e.sourceId === "ofm") {
+      tileErrors++;
+      if (!loaded && tileErrors > 3) {
+        loadsub.innerHTML = "⚠️ Impossible de charger les tuiles de la carte.<br>" +
+          "Vérifiez votre connexion Internet, puis rechargez la page (F5).<br>" +
+          "Le service OpenFreeMap est peut-être momentanément indisponible — réessayez dans quelques minutes.";
+      }
+    }
+  });
+  setTimeout(function () {
+    if (!loaded) {
+      loadsub.innerHTML = "⚠️ La carte met du temps à charger.<br>" +
+        "Vérifiez votre connexion Internet et rechargez la page (F5).<br>" +
+        "Si le problème persiste, le service de tuiles est peut-être momentanément indisponible.";
+    }
+  }, 12000);
 
   map.on("load", function () {
     // Vignette : dégradé radial assombrit la périphérie (Paris reste clair au centre)
