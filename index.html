@@ -306,12 +306,39 @@
     }
   });
   setTimeout(function () {
-    if (!loaded) {
-      loadsub.innerHTML = "⚠️ La carte met du temps à charger.<br>" +
-        "Vérifiez votre connexion Internet et rechargez la page (F5).<br>" +
-        "Si le problème persiste, le service de tuiles est peut-être momentanément indisponible.";
-    }
-  }, 12000);
+    if (loaded) return;
+    // Mode de secours : fond de carte raster sombre (autre serveur, autre domaine)
+    try {
+      if (!map.getSource("fallback")) {
+        map.addSource("fallback", {
+          type: "raster",
+          tiles: ["https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png"],
+          tileSize: 256, maxzoom: 20,
+          attribution: "© OpenStreetMap © CARTO"
+        });
+        map.addLayer({ id: "fallback-raster", type: "raster", source: "fallback",
+          paint: { "raster-opacity": 0.9 } }, "water");
+      }
+    } catch (e) {}
+    loadmsg.style.display = "none";
+    // Diagnostic
+    var diag = document.createElement("div");
+    diag.style.cssText = "position:absolute;bottom:12px;left:12px;z-index:30;background:rgba(10,12,16,.92);" +
+      "border:1px solid #3a3040;border-radius:10px;padding:10px 14px;color:#9aa4b2;font-size:11px;line-height:1.7;max-width:340px;";
+    diag.innerHTML = "<b style='color:#ffd166'>⚠️ Mode de secours activé</b> — carte simplifiée (sans bâtiments 3D). Diagnostic :<br><span id='diagres'>…</span>";
+    document.body.appendChild(diag);
+    var res = document.getElementById("diagres");
+    function line(t, ok) { return (ok === null ? "⏳ " : ok ? "✅ " : "❌ ") + t + "<br>"; }
+    res.innerHTML = line("Connexion Internet", navigator.onLine);
+    var gl = document.createElement("canvas").getContext("webgl2") || document.createElement("canvas").getContext("webgl");
+    res.innerHTML += line("WebGL (rendu 3D)", !!gl);
+    fetch("https://tiles.openfreemap.org/planet", { mode: "cors" })
+      .then(function (r) { res.innerHTML += line("Tuiles OpenFreeMap", r.ok); })
+      .catch(function () { res.innerHTML += line("Tuiles OpenFreeMap (bloquées : pare-feu, antivirus ou proxy ?)", false); });
+    fetch("https://basemaps.cartocdn.com/dark_all/12/2103/1438.png", { mode: "cors" })
+      .then(function (r) { res.innerHTML += line("Secours CARTO", r.ok); })
+      .catch(function () { res.innerHTML += line("Secours CARTO (bloqué)", false); });
+  }, 8000);
 
   map.on("load", function () {
     // Vignette : dégradé radial assombrit la périphérie (Paris reste clair au centre)
