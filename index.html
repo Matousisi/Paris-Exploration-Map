@@ -62,9 +62,6 @@
 </head>
 <body>
 <div id="map"></div>
-<div id="loadmsg" style="position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;background:#000;color:#9aa4b2;font-size:14px;text-align:center;line-height:1.8;">
-  <div>⏳ Chargement de la carte…<br><span id="loadsub" style="font-size:11px;color:#667080"></span></div>
-</div>
 
 <div class="panel" id="ui">
   <h1>PARIS RUN MAP 3D</h1>
@@ -75,7 +72,6 @@
     <button id="btnFree">✍️ Libre</button>
     <button id="btnPan">🖐 Naviguer</button>
     <button id="btnErase">🧽 Gommer</button>
-    <button id="btnSnap" class="active">🧲 Aimant</button>
   </div>
 
   <div class="lbl">Couleur</div>
@@ -238,7 +234,7 @@
           filter: ["in", ["get", "class"], ["literal", ["park", "grass", "forest", "cemetery"]]],
           paint: { "fill-color": "#0a120c", "fill-opacity": 0.8 } },
         { id: "roads", type: "line", source: "ofm", "source-layer": "transportation",
-          filter: ["!in", ["get", "class"], ["literal", ["footway", "path", "steps", "pedestrian", "track", "bridleway", "cycleway", "service"]]],
+          filter: ["!=", ["get", "subclass"], "sidewalk"],
           paint: {
             "line-color": ["match", ["get", "class"],
               "motorway", "#39445c", "trunk", "#333d52", "primary", "#2d3648",
@@ -291,55 +287,6 @@
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-left");
 
-  var loaded = false, tileErrors = 0;
-  var loadmsg = document.getElementById("loadmsg");
-  var loadsub = document.getElementById("loadsub");
-  map.on("load", function () { loaded = true; loadmsg.style.display = "none"; });
-  map.on("error", function (e) {
-    if (e && e.sourceId === "ofm") {
-      tileErrors++;
-      if (!loaded && tileErrors > 3) {
-        loadsub.innerHTML = "⚠️ Impossible de charger les tuiles de la carte.<br>" +
-          "Vérifiez votre connexion Internet, puis rechargez la page (F5).<br>" +
-          "Le service OpenFreeMap est peut-être momentanément indisponible — réessayez dans quelques minutes.";
-      }
-    }
-  });
-  setTimeout(function () {
-    if (loaded) return;
-    // Mode de secours : fond de carte raster sombre (autre serveur, autre domaine)
-    try {
-      if (!map.getSource("fallback")) {
-        map.addSource("fallback", {
-          type: "raster",
-          tiles: ["https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png"],
-          tileSize: 256, maxzoom: 20,
-          attribution: "© OpenStreetMap © CARTO"
-        });
-        map.addLayer({ id: "fallback-raster", type: "raster", source: "fallback",
-          paint: { "raster-opacity": 0.9 } }, "water");
-      }
-    } catch (e) {}
-    loadmsg.style.display = "none";
-    // Diagnostic
-    var diag = document.createElement("div");
-    diag.style.cssText = "position:absolute;bottom:12px;left:12px;z-index:30;background:rgba(10,12,16,.92);" +
-      "border:1px solid #3a3040;border-radius:10px;padding:10px 14px;color:#9aa4b2;font-size:11px;line-height:1.7;max-width:340px;";
-    diag.innerHTML = "<b style='color:#ffd166'>⚠️ Mode de secours activé</b> — carte simplifiée (sans bâtiments 3D). Diagnostic :<br><span id='diagres'>…</span>";
-    document.body.appendChild(diag);
-    var res = document.getElementById("diagres");
-    function line(t, ok) { return (ok === null ? "⏳ " : ok ? "✅ " : "❌ ") + t + "<br>"; }
-    res.innerHTML = line("Connexion Internet", navigator.onLine);
-    var gl = document.createElement("canvas").getContext("webgl2") || document.createElement("canvas").getContext("webgl");
-    res.innerHTML += line("WebGL (rendu 3D)", !!gl);
-    fetch("https://tiles.openfreemap.org/planet", { mode: "cors" })
-      .then(function (r) { res.innerHTML += line("Tuiles OpenFreeMap", r.ok); })
-      .catch(function () { res.innerHTML += line("Tuiles OpenFreeMap (bloquées : pare-feu, antivirus ou proxy ?)", false); });
-    fetch("https://basemaps.cartocdn.com/dark_all/12/2103/1438.png", { mode: "cors" })
-      .then(function (r) { res.innerHTML += line("Secours CARTO", r.ok); })
-      .catch(function () { res.innerHTML += line("Secours CARTO (bloqué)", false); });
-  }, 8000);
-
   map.on("load", function () {
     // Vignette : dégradé radial assombrit la périphérie (Paris reste clair au centre)
     var cv = document.createElement("canvas");
@@ -372,38 +319,6 @@
   /* ===== Dessin ===== */
   var drawing = false, curCoords = [], lastPt = null;
   var segCoords = [], hoverLL = null;
-  var snap = true, routing = false;
-
-  function fetchJson(url) { return fetch(url).then(function (r) { return r.json(); }); }
-
-  // Aimante le clic à la rue la plus proche et suit la géométrie réelle de la rue (OSRM)
-  async function addSegPoint(ll) {
-    if (routing) return;
-    routing = true;
-    var lon = ll[0], lat = ll[1];
-    try {
-      var n = await fetchJson("https://router.project-osrm.org/nearest/v1/driving/" + lon + "," + lat + "?number=1");
-      if (n.locations && n.locations[0]) {
-        var loc = n.locations[0].location;
-        lon = loc[0]; lat = loc[1];
-      }
-    } catch (e) {}
-    if (segCoords.length) {
-      var last = segCoords[segCoords.length - 1];
-      if (Math.abs(last[0] - lon) < 1e-7 && Math.abs(last[1] - lat) < 1e-7) { routing = false; return; }
-      try {
-        var r = await fetchJson("https://router.project-osrm.org/route/v1/driving/" +
-          last[0] + "," + last[1] + ";" + lon + "," + lat + "?overview=full&geometries=geojson");
-        if (r.routes && r.routes[0]) {
-          segCoords = segCoords.concat(r.routes[0].geometry.coordinates.slice(1));
-        } else segCoords.push([lon, lat]);
-      } catch (e) { segCoords.push([lon, lat]); }
-    } else {
-      segCoords.push([lon, lat]);
-    }
-    routing = false;
-    renderAll();
-  }
 
   function unproject(e) {
     var r = map.getCanvas().getBoundingClientRect();
@@ -443,8 +358,8 @@
     } else if (mode === "seg") {
       e.preventDefault();
       var ll2 = unproject(e);
-      if (snap) addSegPoint([ll2.lng, ll2.lat]);
-      else { segCoords.push([ll2.lng, ll2.lat]); renderAll(); }
+      segCoords.push([ll2.lng, ll2.lat]);
+      renderAll();
     } else if (mode === "erase") {
       eraseAt(e);
     }
@@ -537,9 +452,6 @@
   document.getElementById("btnFree").onclick = function () { setMode("free"); };
   document.getElementById("btnPan").onclick = function () { setMode("pan"); };
   document.getElementById("btnErase").onclick = function () { setMode("erase"); };
-  document.getElementById("btnSnap").onclick = function () {
-    snap = this.classList.toggle("active");
-  };
 
   var pal = document.getElementById("palette");
   COLORS.forEach(function (o, i) {
