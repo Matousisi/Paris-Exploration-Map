@@ -72,6 +72,7 @@
     <button id="btnFree">✍️ Libre</button>
     <button id="btnPan">🖐 Naviguer</button>
     <button id="btnErase">🧽 Gommer</button>
+    <button id="btnSnap" class="active">🧲 Aimant</button>
   </div>
 
   <div class="lbl">Couleur</div>
@@ -117,7 +118,7 @@
   <div class="stats" id="stats"></div>
 </div>
 
-<div class="hint">📏 clic : placer un point · double-clic ou Entrée : terminer le trait · Échap : annuler · clic droit : pivoter · molette : zoom</div>
+<div class="hint">📏 clic : point (aimanté à la rue si 🧲 actif) · double-clic ou Entrée : terminer · Échap : annuler · clic droit : pivoter</div>
 
 <div class="modal" id="fallback"><div class="box">
   <h2>🕶️ L'aperçu est limité ici</h2>
@@ -139,6 +140,19 @@
   }
 
   var PARIS_CENTER = [2.3522, 48.8566];
+
+  /* Affiche les erreurs au lieu d'un écran noir muet */
+  window.addEventListener("error", function (ev) {
+    var m = document.getElementById("errbox");
+    if (!m) {
+      m = document.createElement("div");
+      m.id = "errbox";
+      m.style.cssText = "position:absolute;top:12px;right:12px;z-index:99;background:#3a1220;color:#ffb3c0;" +
+        "border:1px solid rgba(255,45,63,.4);border-radius:10px;padding:10px 14px;font-size:11px;max-width:340px;line-height:1.6;";
+      document.body.appendChild(m);
+    }
+    m.innerHTML = "⚠️ " + (ev.message || "Erreur inconnue");
+  });
 
   /* ===== Données utilisateur ===== */
   var LS_KEY = "paris-run-map-3d:strokes";
@@ -234,7 +248,9 @@
           filter: ["in", ["get", "class"], ["literal", ["park", "grass", "forest", "cemetery"]]],
           paint: { "fill-color": "#0a120c", "fill-opacity": 0.8 } },
         { id: "roads", type: "line", source: "ofm", "source-layer": "transportation",
-          filter: ["!=", ["get", "subclass"], "sidewalk"],
+          filter: ["all",
+            ["!=", ["get", "subclass"], "sidewalk"],
+            ["!in", ["get", "class"], ["literal", ["cycleway", "service", "track"]]]],
           paint: {
             "line-color": ["match", ["get", "class"],
               "motorway", "#39445c", "trunk", "#333d52", "primary", "#2d3648",
@@ -319,6 +335,38 @@
   /* ===== Dessin ===== */
   var drawing = false, curCoords = [], lastPt = null;
   var segCoords = [], hoverLL = null;
+  var snap = true, routing = false;
+
+  function fetchJson(url) { return fetch(url).then(function (r) { return r.json(); }); }
+
+  /* Aimante le clic à la rue la plus proche et suit la géométrie réelle (OSRM) */
+  async function addSegPoint(ll) {
+    if (routing) return;
+    routing = true;
+    var lon = ll[0], lat = ll[1];
+    try {
+      var n = await fetchJson("https://router.project-osrm.org/nearest/v1/driving/" + lon + "," + lat + "?number=1");
+      if (n.locations && n.locations[0]) {
+        lon = n.locations[0].location[0];
+        lat = n.locations[0].location[1];
+      }
+    } catch (e) {}
+    if (segCoords.length) {
+      var last = segCoords[segCoords.length - 1];
+      if (Math.abs(last[0] - lon) < 1e-7 && Math.abs(last[1] - lat) < 1e-7) { routing = false; return; }
+      try {
+        var r = await fetchJson("https://router.project-osrm.org/route/v1/driving/" +
+          last[0] + "," + last[1] + ";" + lon + "," + lat + "?overview=full&geometries=geojson");
+        if (r.routes && r.routes[0]) {
+          segCoords = segCoords.concat(r.routes[0].geometry.coordinates.slice(1));
+        } else { segCoords.push([lon, lat]); }
+      } catch (e) { segCoords.push([lon, lat]); }
+    } else {
+      segCoords.push([lon, lat]);
+    }
+    routing = false;
+    renderAll();
+  }
 
   function unproject(e) {
     var r = map.getCanvas().getBoundingClientRect();
@@ -358,8 +406,8 @@
     } else if (mode === "seg") {
       e.preventDefault();
       var ll2 = unproject(e);
-      segCoords.push([ll2.lng, ll2.lat]);
-      renderAll();
+      if (snap) addSegPoint([ll2.lng, ll2.lat]);
+      else { segCoords.push([ll2.lng, ll2.lat]); renderAll(); }
     } else if (mode === "erase") {
       eraseAt(e);
     }
@@ -452,6 +500,9 @@
   document.getElementById("btnFree").onclick = function () { setMode("free"); };
   document.getElementById("btnPan").onclick = function () { setMode("pan"); };
   document.getElementById("btnErase").onclick = function () { setMode("erase"); };
+  document.getElementById("btnSnap").onclick = function () {
+    snap = this.classList.toggle("active");
+  };
 
   var pal = document.getElementById("palette");
   COLORS.forEach(function (o, i) {
