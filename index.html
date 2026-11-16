@@ -23,10 +23,11 @@
     background: linear-gradient(90deg,#22ff88,#4dc9ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
   .panel .sub { font-size: 10.5px; color: #7b8494; margin: 0 0 10px; }
   .row { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+  #modeRow { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   button {
     flex: 1; min-width: 0; background: #161b23; color: #dfe4ec; border: 1px solid #2a3140;
-    border-radius: 8px; padding: 6px 2px; font-size: 9.5px; cursor: pointer; transition: .15s;
-    line-height: 1.2; overflow: hidden;
+    border-radius: 8px; padding: 6px 3px; font-size: 10px; cursor: pointer; transition: .15s;
+    line-height: 1.2;
   }
   button:hover { background: #202734; border-color: #3b4050; }
   button.active { background: #22ff88; color: #05130c; border-color: #22ff88; font-weight: 600; }
@@ -70,8 +71,8 @@
   <div class="row" id="modeRow">
     <button id="btnSeg" class="active">📏 Trait</button>
     <button id="btnFree">✍️ Libre</button>
-    <button id="btnPan">🖐 Nav</button>
-    <button id="btnErase">🧽 Gomme</button>
+    <button id="btnPan">🖐 Naviguer</button>
+    <button id="btnErase">🧽 Gommer</button>
     <button id="btnSnap" class="active">🧲 Aimant</button>
   </div>
 
@@ -353,6 +354,19 @@
     return Math.sqrt(dx * dx + dy * dy) * 111320;
   }
 
+  /* Raccorde le début d'un nouveau trait à l'extrémité proche d'un trait existant */
+  function nearestEndpoint(targetPx) {
+    var best = null, bd = 40;
+    strokes.forEach(function (s) {
+      [s.coords[0], s.coords[s.coords.length - 1]].forEach(function (p) {
+        var pt = map.project(p);
+        var d = Math.hypot(pt.x - targetPx.x, pt.y - targetPx.y);
+        if (d < bd) { bd = d; best = p; }
+      });
+    });
+    return best;
+  }
+
   /* Aimante le clic à la rue la plus proche et suit la géométrie réelle (OSRM) */
   async function addSegPoint(ll) {
     if (routing) return;
@@ -380,6 +394,8 @@
       } catch (e) {}
       if (!routed) segCoords.push([lon, lat]);
     } else {
+      var ep = nearestEndpoint(map.project([lon, lat]));
+      if (ep) { lon = ep[0]; lat = ep[1]; }
       segCoords.push([lon, lat]);
     }
     routing = false;
@@ -411,6 +427,26 @@
   }
 
   var canvas = map.getCanvas();
+
+  /* Défilement automatique quand la souris approche d'un bord (mode Trait) */
+  var lastClient = null;
+  setInterval(function () {
+    if (mode !== "seg" || !lastClient) return;
+    var r = map.getCanvas().getBoundingClientRect();
+    var x = lastClient.x - r.left, y = lastClient.y - r.top;
+    var M = 50, sp = 8;
+    var vx = x < M ? -sp * (1 - x / M) : (x > r.width - M ? sp * (1 - (r.width - x) / M) : 0);
+    var vy = y < M ? -sp * (1 - y / M) : (y > r.height - M ? sp * (1 - (r.height - y) / M) : 0);
+    if (vx || vy) {
+      map.panBy([vx, vy], { animate: false });
+      if (segCoords.length) {
+        var ll = map.unproject([x, y]);
+        hoverLL = [ll.lng, ll.lat];
+        renderAll();
+      }
+    }
+  }, 30);
+
   canvas.addEventListener("pointerdown", function (e) {
     if (e.button !== 0) return;
     if (mode === "free") {
@@ -431,6 +467,7 @@
     }
   });
   canvas.addEventListener("pointermove", function (e) {
+    lastClient = { x: e.clientX, y: e.clientY };
     if (mode === "free" && drawing) {
       var ll = unproject(e);
       var p = map.project(ll);
@@ -594,8 +631,9 @@
   };
   document.getElementById("tglR").onclick = function () {
     var v = this.classList.toggle("active");
-    map.setLayoutProperty("roads", "visibility", v ? "visible" : "none");
-    map.setLayoutProperty("major-roads", "visibility", v ? "visible" : "none");
+    ["roads", "major-roads"].forEach(function (id) {
+      try { map.setLayoutProperty(id, "visibility", v ? "visible" : "none"); } catch (e) {}
+    });
   };
   document.getElementById("tglN").onclick = function () {
     var v = this.classList.toggle("active");
