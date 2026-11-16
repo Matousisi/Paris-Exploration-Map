@@ -248,9 +248,7 @@
           filter: ["in", ["get", "class"], ["literal", ["park", "grass", "forest", "cemetery"]]],
           paint: { "fill-color": "#0a120c", "fill-opacity": 0.8 } },
         { id: "roads", type: "line", source: "ofm", "source-layer": "transportation",
-          filter: ["all",
-            ["!=", ["get", "subclass"], "sidewalk"],
-            ["match", ["get", "class"], ["cycleway", "service", "track"], false, true]],
+          filter: ["match", ["get", "class"], ["footway", "cycleway", "service", "track", "bridleway"], false, true],
           paint: {
             "line-color": ["match", ["get", "class"],
               "motorway", "#39445c", "trunk", "#333d52", "primary", "#2d3648",
@@ -350,6 +348,10 @@
   var snap = true, routing = false;
 
   function fetchJson(url) { return fetch(url).then(function (r) { return r.json(); }); }
+  function distM(a, b) {
+    var dx = (b[0] - a[0]) * Math.cos(48.85 * Math.PI / 180), dy = b[1] - a[1];
+    return Math.sqrt(dx * dx + dy * dy) * 111320;
+  }
 
   /* Aimante le clic à la rue la plus proche et suit la géométrie réelle (OSRM) */
   async function addSegPoint(ll) {
@@ -359,20 +361,24 @@
     try {
       var n = await fetchJson("https://router.project-osrm.org/nearest/v1/driving/" + lon + "," + lat + "?number=1");
       if (n.locations && n.locations[0]) {
-        lon = n.locations[0].location[0];
-        lat = n.locations[0].location[1];
+        var sn = n.locations[0].location;
+        if (distM(ll, sn) < 150) { lon = sn[0]; lat = sn[1]; }
       }
     } catch (e) {}
     if (segCoords.length) {
       var last = segCoords[segCoords.length - 1];
       if (Math.abs(last[0] - lon) < 1e-7 && Math.abs(last[1] - lat) < 1e-7) { routing = false; return; }
+      var straight = distM(last, [lon, lat]);
+      var routed = false;
       try {
         var r = await fetchJson("https://router.project-osrm.org/route/v1/driving/" +
           last[0] + "," + last[1] + ";" + lon + "," + lat + "?overview=full&geometries=geojson");
-        if (r.routes && r.routes[0]) {
+        if (r.routes && r.routes[0] && r.routes[0].distance < straight * 1.7 + 60) {
           segCoords = segCoords.concat(r.routes[0].geometry.coordinates.slice(1));
-        } else { segCoords.push([lon, lat]); }
-      } catch (e) { segCoords.push([lon, lat]); }
+          routed = true;
+        }
+      } catch (e) {}
+      if (!routed) segCoords.push([lon, lat]);
     } else {
       segCoords.push([lon, lat]);
     }
@@ -477,19 +483,51 @@
     var t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2)) : 0;
     return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
   }
+  function segCircle(a, b, c, R, first) {
+    var dx = b.x - a.x, dy = b.y - a.y;
+    var fx = a.x - c.x, fy = a.y - c.y;
+    var A = dx * dx + dy * dy, B = 2 * (fx * dx + fy * dy), C = fx * fx + fy * fy - R * R;
+    var disc = B * B - 4 * A * C;
+    if (disc < 0) return null;
+    var sq = Math.sqrt(disc);
+    var t = first ? (-B - sq) / (2 * A) : (-B + sq) / (2 * A);
+    t = Math.max(0, Math.min(1, t));
+    var ll = map.unproject([a.x + t * dx, a.y + t * dy]);
+    return [ll.lng, ll.lat];
+  }
   function eraseAt(e) {
     var ll = unproject(e);
-    var target = map.project(ll);
-    var before = strokes.length;
-    strokes = strokes.filter(function (s) {
-      if (s.coords.length < 2) return true;
-      for (var i = 0; i < s.coords.length - 1; i++) {
-        var a = map.project(s.coords[i]), b = map.project(s.coords[i + 1]);
-        if (distToSeg(target, a, b) < 12) return false;
+    var c = map.project(ll);
+    var R = 18;
+    var out = [];
+    strokes.forEach(function (s) {
+      if (s.coords.length < 2) { out.push(s); return; }
+      var pts = s.coords.map(function (p) { return map.project(p); });
+      var firstIn = -1, lastIn = -1, i;
+      for (i = 0; i < pts.length; i++) {
+        if (Math.hypot(pts[i].x - c.x, pts[i].y - c.y) < R) {
+          if (firstIn < 0) firstIn = i;
+          lastIn = i;
+        }
       }
-      return true;
+      if (firstIn < 0) { out.push(s); return; }
+      // portion avant la gomme
+      if (firstIn > 0) {
+        var p1 = segCircle(pts[firstIn - 1], pts[firstIn], c, R, true);
+        var c1 = s.coords.slice(0, firstIn);
+        if (p1) c1.push(p1);
+        if (c1.length >= 2) out.push({ color: s.color, width: s.width, coords: c1 });
+      }
+      // portion après la gomme
+      if (lastIn < pts.length - 1) {
+        var p2 = segCircle(pts[lastIn], pts[lastIn + 1], c, R, false);
+        var c2 = s.coords.slice(lastIn + 1);
+        if (p2) c2.unshift(p2);
+        if (c2.length >= 2) out.push({ color: s.color, width: s.width, coords: c2 });
+      }
     });
-    if (strokes.length !== before) update();
+    strokes = out;
+    update();
   }
 
   /* ===== UI ===== */
