@@ -25,8 +25,8 @@
   .row { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
   button {
     flex: 1; min-width: 0; background: #161b23; color: #dfe4ec; border: 1px solid #2a3140;
-    border-radius: 8px; padding: 6px 3px; font-size: 10px; cursor: pointer; transition: .15s;
-    line-height: 1.2;
+    border-radius: 8px; padding: 6px 2px; font-size: 9.5px; cursor: pointer; transition: .15s;
+    line-height: 1.2; overflow: hidden;
   }
   button:hover { background: #202734; border-color: #3b4050; }
   button.active { background: #22ff88; color: #05130c; border-color: #22ff88; font-weight: 600; }
@@ -70,8 +70,8 @@
   <div class="row" id="modeRow">
     <button id="btnSeg" class="active">📏 Trait</button>
     <button id="btnFree">✍️ Libre</button>
-    <button id="btnPan">🖐 Naviguer</button>
-    <button id="btnErase">🧽 Gommer</button>
+    <button id="btnPan">🖐 Nav</button>
+    <button id="btnErase">🧽 Gomme</button>
     <button id="btnSnap" class="active">🧲 Aimant</button>
   </div>
 
@@ -595,6 +595,7 @@
   document.getElementById("tglR").onclick = function () {
     var v = this.classList.toggle("active");
     map.setLayoutProperty("roads", "visibility", v ? "visible" : "none");
+    map.setLayoutProperty("major-roads", "visibility", v ? "visible" : "none");
   };
   document.getElementById("tglN").onclick = function () {
     var v = this.classList.toggle("active");
